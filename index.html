@@ -15,8 +15,9 @@
 
   .badge {
     position: fixed;
-    top: max(18px, env(safe-area-inset-top));
-    right: 18px;
+    bottom: max(14px, env(safe-area-inset-bottom));
+    right: 16px;
+    z-index: 2;
     font-size: 11px;
     letter-spacing: .12em;
     color: rgba(226, 233, 255, .38);
@@ -34,25 +35,75 @@
     top: max(16px, env(safe-area-inset-top));
     display: flex;
     justify-content: center;
-    gap: 10px;
+    gap: 9px;
     opacity: 0;
     animation: fadeIn 1.2s ease-out .3s forwards;
   }
   .tools button {
     appearance: none;
+    width: 40px; height: 40px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border: 1px solid rgba(255, 255, 255, .14);
     background: rgba(255, 255, 255, .06);
-    color: rgba(235, 241, 255, .75);
-    font-size: 12px;
-    letter-spacing: .06em;
-    padding: 7px 14px;
+    color: rgba(235, 241, 255, .85);
+    font-size: 16px;
+    line-height: 1;
     border-radius: 999px;
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
     cursor: pointer;
     transition: .25s;
   }
-  .tools button:active { background: rgba(255, 255, 255, .16); color: #fff; }
+  .tools button:active { background: rgba(255, 255, 255, .16); }
+  .tools button.on {
+    border-color: rgba(255, 214, 140, .6);
+    background: rgba(255, 200, 110, .16);
+    box-shadow: 0 0 16px rgba(255, 196, 110, .3);
+    color: #ffeab8;
+  }
+
+  .cam {
+    position: fixed;
+    left: 14px;
+    top: calc(max(16px, env(safe-area-inset-top)) + 104px);
+    width: 92px; height: 92px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 218, 150, .45);
+    box-shadow: 0 0 22px rgba(255, 190, 110, .22), inset 0 0 22px rgba(0, 0, 0, .4);
+    opacity: 0;
+    transform: scale(.86);
+    transition: opacity .35s, transform .35s;
+    pointer-events: none;
+  }
+  .cam.show { opacity: 1; transform: scale(1); }
+
+  #camVideo { position: fixed; left: -9999px; top: 0; width: 2px; height: 2px; opacity: .01; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    top: calc(max(16px, env(safe-area-inset-top)) + 52px);
+    transform: translateX(-50%) translateY(-6px);
+    max-width: 82vw;
+    padding: 9px 16px;
+    border-radius: 999px;
+    background: rgba(10, 16, 28, .82);
+    border: 1px solid rgba(255, 214, 140, .28);
+    color: rgba(255, 238, 206, .92);
+    font-size: 12.5px;
+    letter-spacing: .02em;
+    text-align: center;
+    opacity: 0;
+    transition: .3s;
+    pointer-events: none;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 10;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
   .caption {
     position: fixed;
@@ -98,10 +149,21 @@
 <canvas id="scene"></canvas>
 
 <div class="tools">
-  <button id="playBtn" type="button">暂停</button>
-  <button id="musicBtn" type="button">🔔 音乐</button>
+  <button id="playBtn" type="button" title="暂停 / 继续" aria-label="暂停或继续">⏸</button>
+  <button id="musicBtn" type="button" title="音乐开关" aria-label="音乐开关">🔔</button>
+  <button id="trackBtn" type="button" title="上传本地音乐" aria-label="上传本地音乐">🎵</button>
+  <button id="photoBtn" type="button" title="上传照片挂到树上" aria-label="上传照片">🖼</button>
+  <button id="cameraBtn" type="button" title="开启摄像头互动" aria-label="摄像头互动">📷</button>
 </div>
+
 <div class="badge">v17.6</div>
+<div id="toast" class="toast"></div>
+
+<canvas id="camPreview" class="cam"></canvas>
+<video id="camVideo" playsinline muted autoplay></video>
+
+<input id="photoInput" type="file" accept="image/*" multiple hidden>
+<input id="trackInput" type="file" accept="audio/*" hidden>
 
 <div class="caption">
   <h1>Merry Christmas</h1>
@@ -116,14 +178,32 @@
   const ctx = canvas.getContext('2d', { alpha: false });
   const playBtn = document.getElementById('playBtn');
   const musicBtn = document.getElementById('musicBtn');
+  const trackBtn = document.getElementById('trackBtn');
+  const photoBtn = document.getElementById('photoBtn');
+  const cameraBtn = document.getElementById('cameraBtn');
+  const photoInput = document.getElementById('photoInput');
+  const trackInput = document.getElementById('trackInput');
+  const camPreview = document.getElementById('camPreview');
+  const camVideo = document.getElementById('camVideo');
+  const toastEl = document.getElementById('toast');
 
   let W = 0, H = 0, DPR = 1;
   let cx = 0, treeTop = 0, treeH = 0, treeBottom = 0, maxR = 0;
 
-  let t = 0;        // 动画时间（秒）
-  let rot = 0;      // 树体旋转角
+  let t = 0;
+  let rot = 0;
   let paused = false;
   let last = 0;
+  let energy = 0;
+
+  /* ---------------- 提示 ---------------- */
+  let toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+  }
 
   /* ---------------- 光点贴图 ---------------- */
 
@@ -207,6 +287,19 @@
   }
 
   const flakes = [];
+  function spawnFlake(fast) {
+    if (flakes.length > 760) return;
+    flakes.push({
+      x: Math.random() * W,
+      y: -12 - Math.random() * H * 0.3,
+      r: 0.4 + Math.random() * 1.1,
+      vy: (fast ? 110 : 12) + Math.random() * (fast ? 90 : 42),
+      drift: 10 + Math.random() * 26,
+      ph: Math.random() * Math.PI * 2,
+      sp: 0.3 + Math.random() * 0.9
+    });
+  }
+
   function buildSnow() {
     flakes.length = 0;
     const n = Math.round(Math.min(320, Math.max(120, W / 3.2)));
@@ -273,6 +366,336 @@
 
     buildBackdrop();
     buildSnow();
+
+    camPreview.width = Math.round(92 * Math.min(window.devicePixelRatio || 1, 2));
+    camPreview.height = camPreview.width;
+  }
+
+  /* ---------------- 照片挂饰 ---------------- */
+
+  const photos = [];
+  const photoOrder = [];
+
+  function makeMedallion(img) {
+    const S = 220;
+    const pad = S * 0.085;
+    const c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    const x = c.getContext('2d');
+
+    const glow = x.createRadialGradient(S / 2, S / 2, S * 0.34, S / 2, S / 2, S / 2);
+    glow.addColorStop(0, 'rgba(255,214,150,0.30)');
+    glow.addColorStop(1, 'rgba(255,214,150,0)');
+    x.fillStyle = glow;
+    x.fillRect(0, 0, S, S);
+
+    const R = S / 2 - pad;
+    x.save();
+    x.beginPath();
+    x.arc(S / 2, S / 2, R, 0, Math.PI * 2);
+    x.clip();
+    const w = img.width || 1, h = img.height || 1;
+    const scale = Math.max((R * 2) / w, (R * 2) / h);
+    const dw = w * scale, dh = h * scale;
+    x.drawImage(img, S / 2 - dw / 2, S / 2 - dh / 2, dw, dh);
+    x.restore();
+
+    x.beginPath();
+    x.arc(S / 2, S / 2, R, 0, Math.PI * 2);
+    x.lineWidth = S * 0.035;
+    x.strokeStyle = 'rgba(255,224,166,0.92)';
+    x.stroke();
+
+    x.beginPath();
+    x.arc(S / 2, S / 2, R - S * 0.032, 0, Math.PI * 2);
+    x.lineWidth = S * 0.01;
+    x.strokeStyle = 'rgba(255,250,232,0.5)';
+    x.stroke();
+
+    return c;
+  }
+
+  function addPhotoFiles(files) {
+    const list = Array.from(files || []).filter(f => f && f.type && f.type.indexOf('image/') === 0);
+    if (!list.length) return;
+    let added = 0, rejected = 0;
+
+    list.forEach((file) => {
+      if (photos.length + added >= 12) { rejected++; return; }
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const idx = photos.length;
+        photos.push({
+          sprite: makeMedallion(img),
+          u: 0.22 + ((idx * 0.11) % 0.58) + Math.random() * 0.06,
+          a: idx * 2.1 + Math.random() * 0.5,
+          seed: Math.random() * Math.PI * 2
+        });
+        URL.revokeObjectURL(url);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); toast('有图片读取失败'); };
+      img.src = url;
+      added++;
+    });
+
+    if (added) toast(rejected ? ('已添加 ' + added + ' 张（最多 12 张）') : ('已添加 ' + added + ' 张照片'));
+    else toast('最多放 12 张照片');
+  }
+
+  photoBtn.addEventListener('click', () => photoInput.click());
+  photoInput.addEventListener('change', (e) => {
+    addPhotoFiles(e.target.files);
+    e.target.value = '';
+  });
+
+  /* ---------------- 音乐 ---------------- */
+
+  const FREQ = {
+    C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.0, A4: 440.0,
+    C5: 523.25, D5: 587.33, E5: 659.25, F5: 698.46, G5: 783.99
+  };
+
+  const MELODY = [
+    ['E5', 1], ['E5', 1], ['E5', 2],
+    ['E5', 1], ['E5', 1], ['E5', 2],
+    ['E5', 1], ['G5', 1], ['C5', 1], ['D5', 1], ['E5', 3],
+    ['F5', 1], ['F5', 1], ['F5', 1], ['F5', 1],
+    ['F5', 1], ['E5', 1], ['E5', 1], ['E5', 1],
+    ['E5', 1], ['D5', 1], ['D5', 1], ['E5', 1],
+    ['D5', 2], ['G5', 2],
+    ['E5', 1], ['E5', 1], ['E5', 2],
+    ['E5', 1], ['E5', 1], ['E5', 2],
+    ['E5', 1], ['G5', 1], ['C5', 1], ['D5', 1], ['E5', 3],
+    ['F5', 1], ['F5', 1], ['F5', 1], ['F5', 1],
+    ['F5', 1], ['E5', 1], ['E5', 1], ['E5', 1],
+    ['G5', 1], ['G5', 1], ['F5', 1], ['D5', 1],
+    ['C5', 4]
+  ];
+
+  const BEAT = 0.36;
+  let audioCtx = null, masterGain = null, synthOn = false;
+  let nextNoteTime = 0, noteIndex = 0, musicTimer = null;
+  let trackAudio = null, trackName = '';
+  let musicKind = null; // null | 'synth' | 'file'
+
+  function playBell(freq, when, decay, amount) {
+    const o1 = audioCtx.createOscillator();
+    const o2 = audioCtx.createOscillator();
+    const g1 = audioCtx.createGain();
+    const g2 = audioCtx.createGain();
+    const bus = audioCtx.createGain();
+
+    o1.type = 'sine';
+    o1.frequency.value = freq;
+    o2.type = 'triangle';
+    o2.frequency.value = freq * 2.02;
+    g1.gain.value = 1;
+    g2.gain.value = 0.28;
+
+    bus.gain.setValueAtTime(0.0001, when);
+    bus.gain.linearRampToValueAtTime(amount, when + 0.012);
+    bus.gain.exponentialRampToValueAtTime(0.0001, when + decay);
+
+    o1.connect(g1); o2.connect(g2);
+    g1.connect(bus); g2.connect(bus);
+    bus.connect(masterGain);
+    o1.start(when); o2.start(when);
+    o1.stop(when + decay + 0.1);
+    o2.stop(when + decay + 0.1);
+  }
+
+  function scheduler() {
+    if (!audioCtx || !synthOn) return;
+    if (nextNoteTime < audioCtx.currentTime) nextNoteTime = audioCtx.currentTime + 0.05;
+    const horizon = audioCtx.currentTime + 1.2;
+    while (nextNoteTime < horizon) {
+      const note = MELODY[noteIndex];
+      const dur = note[1] * BEAT;
+      if (FREQ[note[0]]) playBell(FREQ[note[0]], nextNoteTime, Math.max(0.3, dur * 0.9), 0.055);
+      nextNoteTime += dur;
+      noteIndex = (noteIndex + 1) % MELODY.length;
+    }
+  }
+
+  function startSynth() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      audioCtx = new AC();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = 0.9;
+      masterGain.connect(audioCtx.destination);
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    synthOn = true;
+    nextNoteTime = audioCtx.currentTime + 0.1;
+    noteIndex = 0;
+    scheduler();
+    clearInterval(musicTimer);
+    musicTimer = setInterval(scheduler, 400);
+    return true;
+  }
+
+  function stopSynth() {
+    synthOn = false;
+    clearInterval(musicTimer);
+    musicTimer = null;
+  }
+
+  function updateMusicIcon() {
+    musicBtn.textContent = musicKind ? '🔕' : '🔔';
+    musicBtn.classList.toggle('on', !!musicKind);
+  }
+
+  function stopAllMusic() {
+    stopSynth();
+    if (trackAudio) trackAudio.pause();
+    musicKind = null;
+    updateMusicIcon();
+  }
+
+  function toggleMusic() {
+    if (musicKind) {
+      stopAllMusic();
+      toast('已静音');
+      return;
+    }
+    if (trackAudio) {
+      trackAudio.play().then(() => {
+        musicKind = 'file';
+        updateMusicIcon();
+        toast('正在播放：' + trackName);
+      }).catch(() => toast('音频播放被浏览器拦截，请再点一次'));
+      return;
+    }
+    if (startSynth()) {
+      musicKind = 'synth';
+      updateMusicIcon();
+      toast('八音盒《铃儿响叮当》');
+    }
+  }
+
+  musicBtn.addEventListener('click', toggleMusic);
+
+  trackBtn.addEventListener('click', () => trackInput.click());
+  trackInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    stopSynth();
+    if (trackAudio) {
+      trackAudio.pause();
+      if (trackAudio.dataset.url) URL.revokeObjectURL(trackAudio.dataset.url);
+    }
+    const url = URL.createObjectURL(file);
+    trackAudio = new Audio(url);
+    trackAudio.dataset.url = url;
+    trackAudio.loop = true;
+    trackAudio.volume = 0.62;
+    trackName = file.name.replace(/\.(mp3|wav|m4a|aac|ogg|flac)$/i, '');
+    trackAudio.play().then(() => {
+      musicKind = 'file';
+      updateMusicIcon();
+      toast('已载入音乐：' + trackName);
+    }).catch(() => toast('已载入，点 🔔 播放'));
+  });
+
+  /* ---------------- 摄像头 ---------------- */
+
+  const cam = {
+    on: false,
+    stream: null,
+    prev: null,
+    small: document.createElement('canvas')
+  };
+  cam.small.width = 48;
+  cam.small.height = 36;
+
+  async function startCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast('当前浏览器不支持摄像头');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      cam.stream = stream;
+      camVideo.srcObject = stream;
+      await camVideo.play().catch(() => {});
+      cam.on = true;
+      cam.prev = null;
+      camPreview.classList.add('show');
+      cameraBtn.classList.add('on');
+      toast('摄像头已开启 · 挥挥手试试');
+    } catch (err) {
+      const name = err && err.name ? err.name : '';
+      toast(name === 'NotAllowedError' ? '摄像头权限被拒绝，请在浏览器里允许' : '摄像头打开失败：设备不可用');
+    }
+  }
+
+  function stopCamera() {
+    if (cam.stream) {
+      cam.stream.getTracks().forEach(tr => tr.stop());
+      cam.stream = null;
+    }
+    camVideo.srcObject = null;
+    cam.on = false;
+    cam.prev = null;
+    energy = 0;
+    camPreview.classList.remove('show');
+    cameraBtn.classList.remove('on');
+  }
+
+  cameraBtn.addEventListener('click', () => {
+    if (cam.on) { stopCamera(); toast('摄像头已关闭'); }
+    else startCamera();
+  });
+
+  function readMotion() {
+    if (!cam.on || !camVideo.videoWidth) return 0;
+    const sc = cam.small.getContext('2d', { willReadFrequently: true });
+    sc.drawImage(camVideo, 0, 0, cam.small.width, cam.small.height);
+    let data;
+    try { data = sc.getImageData(0, 0, cam.small.width, cam.small.height).data; } catch (e) { return 0; }
+    if (!cam.prev) { cam.prev = data; return 0; }
+    let diff = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const a = (data[i] + data[i + 1] + data[i + 2]) / 3;
+      const b = (cam.prev[i] + cam.prev[i + 1] + cam.prev[i + 2]) / 3;
+      diff += Math.abs(a - b);
+    }
+    const m = diff / (cam.small.width * cam.small.height) / 55;
+    cam.prev = data;
+    return Math.min(1.6, m);
+  }
+
+  function drawCamPreview() {
+    if (!cam.on) return;
+    const c = camPreview.getContext('2d');
+    const S = camPreview.width;
+    c.clearRect(0, 0, S, S);
+    const vw = camVideo.videoWidth, vh = camVideo.videoHeight;
+    if (!vw || !vh) return;
+
+    c.save();
+    c.beginPath();
+    c.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2);
+    c.clip();
+    c.translate(S, 0);
+    c.scale(-1, 1);
+    const scale = Math.max(S / vw, S / vh);
+    const dw = vw * scale, dh = vh * scale;
+    c.drawImage(camVideo, (S - dw) / 2, (S - dh) / 2, dw, dh);
+    c.restore();
+
+    c.beginPath();
+    c.arc(S / 2, S / 2, S / 2 - 1, 0, Math.PI * 2);
+    c.lineWidth = Math.max(2, S * 0.02);
+    c.strokeStyle = 'rgba(255, 224, 166, 0.55)';
+    c.stroke();
   }
 
   /* ---------------- 绘制 ---------------- */
@@ -322,6 +745,8 @@
     ctx.restore();
   }
 
+  let burstAcc = 0;
+
   function draw(dt) {
     if (bg) ctx.drawImage(bg, 0, 0, W, H);
     else { ctx.fillStyle = '#050a14'; ctx.fillRect(0, 0, W, H); }
@@ -340,6 +765,8 @@
     ctx.arc(cx, gy, maxR * 3.4, 0, Math.PI * 2);
     ctx.fill();
 
+    const boost = 1 + 0.55 * energy;
+
     // 树体丝带粒子
     for (let i = 0; i < strands.length; i++) {
       const p = strands[i];
@@ -350,7 +777,7 @@
       const depth = 0.5 + 0.5 * Math.sin(ang);
       const tw = 0.5 + 0.5 * Math.sin(t * 1.7 + p.tw + p.u * 9);
       const s = p.size * (0.8 + depth * 0.9) * (1 + 0.1 * Math.sin(t * 2.6 + p.tw));
-      ctx.globalAlpha = (0.15 + 0.5 * depth) * (0.45 + 0.55 * tw);
+      ctx.globalAlpha = Math.min(1, (0.15 + 0.5 * depth) * (0.45 + 0.55 * tw) * (energy > 0 ? boost : 1));
       ctx.drawImage(p.warm ? spGold : spGreen, x - s, y - s, s * 2, s * 2);
     }
 
@@ -377,12 +804,11 @@
       const depth = 0.5 + 0.5 * Math.sin(ang);
       const tw = 0.5 + 0.5 * Math.sin(t * o.speed + o.ph);
       const s = o.size * (0.72 + depth * 0.55) * (0.85 + 0.3 * tw);
-      ctx.globalAlpha = (0.22 + 0.72 * depth) * (0.45 + 0.55 * tw);
+      ctx.globalAlpha = Math.min(1, (0.22 + 0.72 * depth) * (0.45 + 0.55 * tw) * boost);
       ctx.drawImage(spLights[o.ci], x - s, y - s, s * 2, s * 2);
 
-      // 灯芯高光，让彩灯更“亮”而不是一团雾
       const c = COLORS[o.ci];
-      ctx.globalAlpha = (0.35 + 0.6 * depth) * (0.5 + 0.5 * tw);
+      ctx.globalAlpha = Math.min(1, (0.35 + 0.6 * depth) * (0.5 + 0.5 * tw) * boost);
       ctx.fillStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',1)';
       ctx.beginPath();
       ctx.arc(x, y, Math.max(0.7, s * 0.16), 0, Math.PI * 2);
@@ -390,11 +816,10 @@
     }
 
     // 顶端星芒
-    const pulse = 0.5 + 0.5 * Math.sin(t * 1.9);
+    const pulse = Math.min(1.6, 0.5 + 0.5 * Math.sin(t * 1.9) + energy * 0.5);
     drawStar(cx, treeTop - maxR * 0.16, Math.max(10, maxR * 0.16), pulse);
 
     // 雪
-    ctx.globalCompositeOperation = 'lighter';
     for (let i = 0; i < flakes.length; i++) {
       const f = flakes[i];
       f.y += f.vy * dt;
@@ -405,6 +830,54 @@
       const s = f.r * 1.5;
       ctx.globalAlpha = 0.16 + 0.42 * Math.min(1, f.r / 1.5);
       ctx.drawImage(spSnow, f.x - s, f.y - s, s * 2, s * 2);
+    }
+
+    // 摄像头动作 → 撒雪
+    if (cam.on && energy > 0.28 && dt > 0) {
+      burstAcc += energy * dt * 90;
+      while (burstAcc >= 1) {
+        spawnFlake(true);
+        burstAcc -= 1;
+      }
+    } else {
+      burstAcc = 0;
+    }
+
+    // 照片挂饰（不参与发光混合，按深度排序）
+    if (photos.length) {
+      ctx.globalCompositeOperation = 'source-over';
+      photoOrder.length = 0;
+      for (let i = 0; i < photos.length; i++) {
+        const ph = photos[i];
+        const ang = ph.a + rot;
+        const z = Math.sin(ang);
+        if (z < -0.08) continue;
+        photoOrder.push({ ph: ph, ang: ang, z: z });
+      }
+      photoOrder.sort((a, b) => a.z - b.z);
+      const base = maxR * 0.30;
+      for (let i = 0; i < photoOrder.length; i++) {
+        const item = photoOrder[i];
+        const ph = item.ph;
+        const y = treeTop + ph.u * treeH;
+        const rad = maxR * Math.pow(ph.u, 0.92);
+        const x = cx + Math.cos(item.ang) * rad;
+        const depth = 0.5 + 0.5 * item.z;
+        const s = base * (0.62 + 0.42 * depth);
+
+        ctx.globalAlpha = 0.3 * depth;
+        ctx.strokeStyle = 'rgba(255, 220, 160, 1)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, y - s / 2 + 1);
+        ctx.lineTo(x + Math.sin(t * 0.7 + ph.seed) * s * 0.06, y - s * 0.82);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.45 + 0.55 * depth;
+        const sway = Math.sin(t * 0.7 + ph.seed) * s * 0.03;
+        ctx.drawImage(ph.sprite, x - s / 2 + sway, y - s / 2, s, s);
+      }
+      ctx.globalAlpha = 1;
     }
 
     ctx.globalAlpha = 1;
@@ -423,116 +896,24 @@
       t += dt;
       rot += dt * 0.52;
     }
+
+    if (cam.on) {
+      const target = paused ? 0 : readMotion();
+      energy += (Math.min(1, target) - energy) * 0.14;
+      if (energy < 0.02) energy = 0;
+      drawCamPreview();
+    }
+
     draw(paused ? 0 : dt);
     requestAnimationFrame(frame);
-  }
-
-  /* ---------------- 音乐（圣诞铃儿响叮当，音色如八音盒） ---------------- */
-
-  const FREQ = {
-    C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.0, A4: 440.0,
-    C5: 523.25, D5: 587.33, E5: 659.25, F5: 698.46, G5: 783.99
-  };
-
-  const MELODY = [
-    ['E5', 1], ['E5', 1], ['E5', 2],
-    ['E5', 1], ['E5', 1], ['E5', 2],
-    ['E5', 1], ['G5', 1], ['C5', 1], ['D5', 1], ['E5', 3],
-    ['F5', 1], ['F5', 1], ['F5', 1], ['F5', 1],
-    ['F5', 1], ['E5', 1], ['E5', 1], ['E5', 1],
-    ['E5', 1], ['D5', 1], ['D5', 1], ['E5', 1],
-    ['D5', 2], ['G5', 2],
-    ['E5', 1], ['E5', 1], ['E5', 2],
-    ['E5', 1], ['E5', 1], ['E5', 2],
-    ['E5', 1], ['G5', 1], ['C5', 1], ['D5', 1], ['E5', 3],
-    ['F5', 1], ['F5', 1], ['F5', 1], ['F5', 1],
-    ['F5', 1], ['E5', 1], ['E5', 1], ['E5', 1],
-    ['G5', 1], ['G5', 1], ['F5', 1], ['D5', 1],
-    ['C5', 4]
-  ];
-
-  const BEAT = 0.36;
-  let audioCtx = null, masterGain = null, musicOn = false;
-  let nextNoteTime = 0, noteIndex = 0, musicTimer = null;
-
-  function playBell(freq, when, decay, amount) {
-    const o1 = audioCtx.createOscillator();
-    const o2 = audioCtx.createOscillator();
-    const g1 = audioCtx.createGain();
-    const g2 = audioCtx.createGain();
-    const bus = audioCtx.createGain();
-
-    o1.type = 'sine';
-    o1.frequency.value = freq;
-    o2.type = 'triangle';
-    o2.frequency.value = freq * 2.02;
-    g1.gain.value = 1;
-    g2.gain.value = 0.28;
-
-    bus.gain.setValueAtTime(0.0001, when);
-    bus.gain.linearRampToValueAtTime(amount, when + 0.012);
-    bus.gain.exponentialRampToValueAtTime(0.0001, when + decay);
-
-    o1.connect(g1); o2.connect(g2);
-    g1.connect(bus); g2.connect(bus);
-    bus.connect(masterGain);
-    o1.start(when); o2.start(when);
-    o1.stop(when + decay + 0.1);
-    o2.stop(when + decay + 0.1);
-  }
-
-  function scheduler() {
-    if (!audioCtx || !musicOn) return;
-    if (nextNoteTime < audioCtx.currentTime) nextNoteTime = audioCtx.currentTime + 0.05;
-    const horizon = audioCtx.currentTime + 1.2;
-    while (nextNoteTime < horizon) {
-      const note = MELODY[noteIndex];
-      const dur = note[1] * BEAT;
-      if (FREQ[note[0]]) playBell(FREQ[note[0]], nextNoteTime, Math.max(0.3, dur * 0.9), 0.055);
-      nextNoteTime += dur;
-      noteIndex = (noteIndex + 1) % MELODY.length;
-    }
-  }
-
-  function startMusic() {
-    if (!audioCtx) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return false;
-      audioCtx = new AC();
-      masterGain = audioCtx.createGain();
-      masterGain.gain.value = 0.9;
-      masterGain.connect(audioCtx.destination);
-    }
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    musicOn = true;
-    nextNoteTime = audioCtx.currentTime + 0.1;
-    noteIndex = 0;
-    scheduler();
-    clearInterval(musicTimer);
-    musicTimer = setInterval(scheduler, 400);
-    return true;
-  }
-
-  function stopMusic() {
-    musicOn = false;
-    clearInterval(musicTimer);
-    musicTimer = null;
   }
 
   /* ---------------- 交互 ---------------- */
 
   playBtn.addEventListener('click', () => {
     paused = !paused;
-    playBtn.textContent = paused ? '继续' : '暂停';
-  });
-
-  musicBtn.addEventListener('click', () => {
-    if (musicOn) {
-      stopMusic();
-      musicBtn.textContent = '🔔 音乐';
-    } else if (startMusic()) {
-      musicBtn.textContent = '🔇 音乐';
-    }
+    playBtn.textContent = paused ? '▶' : '⏸';
+    playBtn.classList.toggle('on', paused);
   });
 
   /* ---------------- 启动 ---------------- */
